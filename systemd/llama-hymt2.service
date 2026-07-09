@@ -1,0 +1,28 @@
+[Unit]
+Description=Hy-MT2-30B-A3B Q4_K_M Translation Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/path/to/patched-llama-server \
+  -m /path/to/Hy-MT2-30B-A3B-Q4_K_M.gguf \
+  -ngl 99 \
+  --no-mmap --mlock \
+  -c 98304 \
+  --parallel 6 --cont-batching \
+  -fa on \
+  --ubatch-size 4096 \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  --cache-reuse 256 \
+  --jinja \
+  --alias Hy-MT2-30B-A3B \
+  --host 127.0.0.1 --port 8002
+ExecStop=/usr/bin/pkill -f "llama-server.*--port 8002"
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=120
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,12 @@
+# Model weights (downloaded from Hugging Face)
+*.gguf
+*.part
+
+# Runtime
+.llama-hymt2.pid
+.llama-hymt2.log
+nohup.out
+
+# OS
+.DS_Store
+Thumbs.db
