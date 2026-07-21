@@ -6,6 +6,7 @@
 .llama-hymt2.pid
 .llama-hymt2.log
 nohup.out
+.worktrees/
 
 # OS
 .DS_Store
