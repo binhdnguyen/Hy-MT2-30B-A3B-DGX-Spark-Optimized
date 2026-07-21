@@ -1,12 +1,21 @@
-# Model weights (downloaded from Hugging Face)
+# Model weights and partial downloads
 *.gguf
 *.part
+*.safetensors
+
+# Local llama.cpp checkout and build outputs
+llama.cpp/
+build/
+build-*/
 
 # Runtime
 .llama-hymt2.pid
 .llama-hymt2.log
 nohup.out
-.worktrees/
+
+# Python tests
+__pycache__/
+*.pyc
 
 # OS
 .DS_Store

@@ -1,21 +1,24 @@
 # Changelog
 
+## [1.1.0] - 2026-07-21
+
+### Changed
+
+- Synced the recipe to the verified Q8_0 deployment on port 8002.
+- Added portable `$HOME`/`%h` defaults and the complete live server flag set, including `--temp 0.7`.
+- Pinned llama.cpp to `c57607016a1ebdd08d269e3378eee5546fc3bf3a` and included the verified HYV3 patch and preparation script.
+- Updated the systemd unit with NVIDIA readiness, unlimited start retries, `Restart=always`, and verified timeouts.
+- Replaced stale Q4 and placeholder instructions with BF16-to-Q8_0 reproduction, install, health, and restore steps.
+
+### Verified artifact
+
+- File: `Hy-MT2-30B-A3B-Q8_0.gguf`
+- Size: 31,985,729,632 bytes
+- SHA256: `f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a`
+- The exact Q8_0 file is not currently a direct public artifact in the cited source repository.
+
 ## [1.0.0] - 2026-07-09
 
 ### Added
-- `start.sh` — production-grade start script with health-check spinner, duplicate guard, PID management
-- `stop.sh` — graceful shutdown with fallback to port-based detection
-- `--parallel 6 --cont-batching` for translation throughput (3.72 chunks/min)
-- `--no-mmap --mlock` for DGX Spark / GB10 unified memory
-- `--cache-type-k/v q8_0` for 2x VRAM savings
-- `--cache-reuse 256` for translation pattern reuse
-- `--ubatch-size 4096` tuned for translation batch sizes
-- `--flash-attn on` for Blackwell SM121
-- systemd user service for auto-start on boot (see `systemd/`)
-- `.gitignore` — excludes logs, PID files, and downloaded model weights
-- Runs alongside Qwen35 Q8_K_XL on same GB10 (68 GB total / 128 GB)
 
-### Notes
-- No MTP support — Hy-MT2 hy_v3 architecture doesn't support speculative decoding
-- Speed benchmarks pending (after translation batch completes)
-- Built against patched llama.cpp with hy_v3 architecture support
+- Initial helper scripts and systemd recipe.

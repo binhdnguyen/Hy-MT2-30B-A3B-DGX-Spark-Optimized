@@ -1,185 +1,152 @@
-# Hy-MT2-30B-A3B Q4_K_M — DGX Spark Optimized Recipe 🌐
+# Hy-MT2-30B-A3B Q8_0 - DGX Spark Optimized Recipe
 
-**Production-grade `llama-server` recipe for Hy-MT2-30B-A3B on NVIDIA DGX Spark / GB10**, optimized for Chinese↔Vietnamese neural machine translation with continuous batching and tuned parallel processing.
+A reproducible `llama-server` recipe matching the verified local Hy-MT2-30B-A3B Q8_0 deployment on NVIDIA DGX Spark / GB10.
 
-> 📊 **30B MoE parameters, ~3B active** — runs at ~3.7 chunks/min with parallel=6, alongside Qwen35 on same hardware.
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Hardware: DGX Spark](https://img.shields.io/badge/Hardware-DGX%20Spark%20%2F%20GB10-76B900?logo=nvidia)](https://www.nvidia.com/en-us/products/workstations/dgx-spark/)
-[![Model: Hy-MT2](https://img.shields.io/badge/Model-Hy--MT2--30B--A3B-green)](https://huggingface.co/)
-
----
-
-## Model Overview
+## Verified deployment
 
 | Property | Value |
 |---|---|
-| **Model** | Hy-MT2-30B-A3B |
-| **Architecture** | Mixture-of-Experts (MoE) — hy_v3 |
-| **Total params** | 30B |
-| **Active params** | ~3B per token |
-| **Quantization** | Q4_K_M (~18.2 GB on disk) |
-| **Task** | Chinese ↔ Vietnamese machine translation |
-| **Context window** | 96K tokens |
-| **llama.cpp** | Patched build for hy_v3 support |
+| Base model | [`tencent/Hy-MT2-30B-A3B`](https://huggingface.co/tencent/Hy-MT2-30B-A3B) |
+| GGUF source repository | [`GrahLnn/Hy-MT2-30B-A3B-4bit-GGUF`](https://huggingface.co/GrahLnn/Hy-MT2-30B-A3B-4bit-GGUF) |
+| Deployed quantization | Q8_0 |
+| Deployed filename | `Hy-MT2-30B-A3B-Q8_0.gguf` |
+| Size | 31,985,729,632 bytes |
+| SHA256 | `f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a` |
+| Context | 98,304 tokens |
+| Parallel slots | 6 |
+| API | `http://127.0.0.1:8002/v1` |
+| llama.cpp base | `c57607016a1ebdd08d269e3378eee5546fc3bf3a` plus `patches/llama-cpp-hyv3.patch` |
 
-## What Makes This Recipe Different
+The service was verified enabled and active, and its `/health` endpoint returned `{"status":"ok"}`. No throughput or memory number is asserted here because this recipe does not include a reproducible benchmark capture.
 
-| Feature | Why |
-|---|---|
-| `--parallel 6 --cont-batching` | Translation-optimized: process 6 chunks simultaneously |
-| `--ubatch-size 4096` | Tuned for translation batch sizes — 3.72 chunks/min |
-| `--no-mmap --mlock` | Critical on GB10 unified memory |
-| `--cache-type-k/v q8_0` | 2x VRAM savings for KV cache |
-| `--cache-reuse 256` | Reuse KV prefix for repeated translation patterns |
-| `--flash-attn on` | Blackwell SM121 native support |
-| Systemd auto-start | Survive reboots without manual intervention |
+## Q8_0 artifact provenance
 
-## Quick Start
+There is currently **no direct public Q8 download artifact** known to match the deployed file. The GGUF source repository publishes a BF16 conversion source and lower-bit derivatives, but does not currently track this exact Q8_0 file. Do not substitute a guessed URL.
 
-### Prerequisites
-
-- **NVIDIA DGX Spark / GB10** (128GB unified memory)
-- **Patched llama.cpp** built with CUDA + hy_v3 architecture support
-- **~19 GB disk** for model file
-- `bash`, `curl`
-
-### 1. Download Model
+Reproduce the route from the advertised BF16 GGUF:
 
 ```bash
-# Download Hy-MT2-30B-A3B Q4_K_M GGUF
-huggingface-cli download <repo>/Hy-MT2-30B-A3B-GGUF \
-  Hy-MT2-30B-A3B-Q4_K_M.gguf \
-  --local-dir .
+git lfs install
+git clone https://huggingface.co/GrahLnn/Hy-MT2-30B-A3B-4bit-GGUF
+cd Hy-MT2-30B-A3B-4bit-GGUF
+
+$HOME/ai/hy-mt2-gguf-repo/llama.cpp/build-hyv3-cuda/bin/llama-quantize \
+  Hy-MT2-30B-A3B-BF16.gguf \
+  Hy-MT2-30B-A3B-Q8_0.gguf \
+  Q8_0
+
+sha256sum Hy-MT2-30B-A3B-Q8_0.gguf
+stat --printf='%s bytes\n' Hy-MT2-30B-A3B-Q8_0.gguf
 ```
 
-### 2. Configure `start.sh`
+Expected deployed checksum and size:
 
-```bash
-MODEL="/path/to/Hy-MT2-30B-A3B-Q4_K_M.gguf"
-PATCHED_LLAMA="/path/to/patched-llama-server"  # hy_v3 build
-PORT="${PORT:-8002}"
+```text
+f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a  Hy-MT2-30B-A3B-Q8_0.gguf
+31,985,729,632 bytes
 ```
 
-### 3. Start
+Checksum equality depends on the pinned source artifact, exact patched llama.cpp commit, patch, quantization command, and tooling versions. Verify the result before treating a generated file as identical to the deployment.
+
+## Prerequisites
+
+- NVIDIA DGX Spark / GB10 with a working CUDA driver
+- `git`, Git LFS, CMake, a C++ compiler, CUDA toolkit, `bash`, and `curl`
+- Enough storage for the BF16 source, Q8_0 output, and build tree
+
+## Build the pinned patched llama.cpp
+
+The preparation script clones upstream llama.cpp, checks out the exact verified commit, applies the included HYV3 patch, proves required HYV3 markers exist, and builds only `llama-server` and `llama-quantize` with CUDA.
 
 ```bash
-chmod +x start.sh stop.sh
+./scripts/prepare_llama_cpp.sh "$HOME/ai/hy-mt2-gguf-repo/llama.cpp"
+```
+
+The script refuses to alter a dirty existing checkout and fails closed if the patch cannot be applied and HYV3 support cannot be proven.
+
+## Install the model
+
+```bash
+mkdir -p "$HOME/ai/models/hy-mt2-30b-a3b-q8"
+cp Hy-MT2-30B-A3B-Q8_0.gguf \
+  "$HOME/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf"
+sha256sum "$HOME/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf"
+```
+
+## Start with the helper
+
+`start.sh` defaults to portable paths under `$HOME/ai` and preserves `MODEL`, `PATCHED_LLAMA`, `HOST`, and `PORT` overrides.
+
+```bash
 ./start.sh
-# ✅ Hy-MT2-30B-A3B ready on http://127.0.0.1:8002/v1
+curl -fsS http://127.0.0.1:8002/health
 ```
 
-### 4. Translate
+Expected health response:
 
-```bash
-curl http://127.0.0.1:8002/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "Translate to Vietnamese: 人工智能正在改变世界。"}],
-    "max_tokens": 200,
-    "temperature": 0.3,
-    "stream": false
-  }' | jq '.choices[0].message.content'
+```json
+{"status":"ok"}
 ```
 
-### 5. Stop
+Stop the helper-managed process with:
 
 ```bash
 ./stop.sh
 ```
 
-## Server Flags Explained
+## Install the systemd user service
 
-| Flag | Value | Why |
-|---|---|---|
-| `--parallel` | `6` | Process 6 translation chunks simultaneously |
-| `--cont-batching` | — | Continuous batching for throughput |
-| `--ubatch-size` | `4096` | Large batches optimal for translation (3.72 chunks/min) |
-| `--no-mmap` | — | **Critical** — mmap slowdown on GB10 unified memory |
-| `--mlock` | — | Prevent model pages from swap |
-| `--cache-type-k/v` | `q8_0` | 2x VRAM savings (96K ctx) |
-| `--cache-reuse` | `256` | Prefix reuse for repeated translation patterns |
-| `--ctx-size` | `98304` | 96K context — enough for long documents |
-| `-ngl` | `99` | Full GPU offload |
-| `--flash-attn` | `on` | Blackwell SM121 native |
-
-### What's NOT included (vs Qwen35 recipe)
-
-| Feature | Why not |
-|---|---|
-| MTP drafter | Hy-MT2 architecture doesn't support speculative decoding |
-| Vision (mmproj) | Translation-only model, no multimodal |
-| Thinking/CoT | Not applicable for NMT |
-| `--spec-draft-model` | No MTP heads in hy_v3 architecture |
-
-## Running Alongside Qwen35 on GB10
-
-Both models fit comfortably on a single DGX Spark:
-
-| Model | VRAM | Port |
-|---|---|---|
-| Hy-MT2 Q4_K_M | ~23 GB | `:8002` |
-| Qwen35 Q8_K_XL | ~45 GB | `:8000` |
-| **Total** | **~68 GB** | |
-| **Free** | **~60 GB** | |
-
-> See [Qwen3.6-35B-A3B DGX Spark Optimized Recipe](https://github.com/binhdnguyen/Qwen3.6-35B-A3B-UD-Q8_K_XL-DGX-Spark-Optimized) for the companion Qwen35 setup.
-
-## Auto-start on Boot (systemd)
+The supplied unit uses `%h` paths, waits for `nvidia-smi`, retries without a start limit, and restarts after failures or clean exits.
 
 ```bash
-mkdir -p ~/.config/systemd/user/
-cp systemd/llama-hymt2.service ~/.config/systemd/user/
-sudo loginctl enable-linger $USER
+mkdir -p "$HOME/.config/systemd/user"
+cp systemd/llama-hymt2.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable --now llama-hymt2.service
+systemctl --user status llama-hymt2.service
+curl -fsS http://127.0.0.1:8002/health
 ```
 
-## Building the Patched llama.cpp
-
-Hy-MT2 uses a custom `hy_v3` architecture requiring a patched llama.cpp build:
+For boot-time user services without an interactive login, an administrator may enable lingering:
 
 ```bash
-git clone <hy-mt2-llama.cpp-repo>
-cd llama.cpp
-
-cmake -B build-hyv3-cuda \
-  -DGGML_CUDA=ON \
-  -DGGML_CUDA_FA_ALL_QUANTS=ON \
-  -DCMAKE_CUDA_ARCHITECTURES=121 \
-  -DGGML_NATIVE=ON
-
-cmake --build build-hyv3-cuda --config Release -j 20
+sudo loginctl enable-linger "$USER"
 ```
 
-> The patched binary lives at `build-hyv3-cuda/bin/llama-server` — separate from the main llama.cpp build.
+## Verified server flags
 
-## VRAM Budget
+```text
+-ngl 99
+--no-mmap --mlock
+-c 98304
+--parallel 6 --cont-batching
+-fa on
+--ubatch-size 4096
+--cache-type-k q8_0 --cache-type-v q8_0
+--cache-reuse 256
+--temp 0.7
+--jinja
+--alias Hy-MT2-30B-A3B
+--host 127.0.0.1 --port 8002
+```
 
-| Component | Size |
-|---|---|
-| Q4_K_M model (18.2 GB) | ~18.5 GB |
-| KV cache 96K ctx (q8_0) | ~1.5 GB |
-| Parallel=6 overhead | ~3 GB |
-| CUDA overhead | ~0.5 GB |
-| **Total** | **~23 GB** |
+## Restore or roll back
 
-> Leaves ~105 GB free on 128GB DGX Spark — Qwen35 Q8_K_XL fits alongside.
+```bash
+systemctl --user disable --now llama-hymt2.service
+rm "$HOME/.config/systemd/user/llama-hymt2.service"
+systemctl --user daemon-reload
+```
 
-## Benchmarks
+If replacing an older unit, save it first and restore that backup instead of deleting it:
 
-*Speed tests coming after translation batch.* Stay tuned.
+```bash
+cp "$HOME/.config/systemd/user/llama-hymt2.service" \
+  "$HOME/.config/systemd/user/llama-hymt2.service.backup"
+```
 
-## Related Projects
-
-- [Qwen3.6-35B-A3B DGX Spark Optimized](https://github.com/binhdnguyen/Qwen3.6-35B-A3B-UD-Q8_K_XL-DGX-Spark-Optimized) — companion recipe
-- [llama.cpp Discussion #21112](https://github.com/ggml-org/llama.cpp/discussions/21112) — optimization guidance
-- [TransLLM](https://github.com/) — Chinese-Vietnamese translation pipeline using this model
+No service restart or model load is required to validate this repository's static recipe files.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
-
----
-
-Made with ❤️ for the NMT + local LLM community.
+MIT - see [LICENSE](LICENSE).

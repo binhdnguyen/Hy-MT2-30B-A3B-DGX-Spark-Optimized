@@ -1,12 +1,16 @@
 [Unit]
-Description=Hy-MT2-30B-A3B Q4_K_M Translation Server
+Description=Hy-MT2-30B-A3B Q8_0 Translation Server (main translator, :8002)
 After=network-online.target
 Wants=network-online.target
+# Keep trying after boot races (GPU driver, unified memory not ready yet)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/path/to/patched-llama-server \
-  -m /path/to/Hy-MT2-30B-A3B-Q4_K_M.gguf \
+# Wait until NVIDIA is usable before loading the 30 GB model
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 90); do nvidia-smi -L >/dev/null 2>&1 && exit 0; sleep 2; done; echo "nvidia-smi not ready after 180s" >&2; exit 1'
+ExecStart=%h/ai/hy-mt2-gguf-repo/llama.cpp/build-hyv3-cuda/bin/llama-server \
+  -m %h/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf \
   -ngl 99 \
   --no-mmap --mlock \
   -c 98304 \
@@ -15,14 +19,15 @@ ExecStart=/path/to/patched-llama-server \
   --ubatch-size 4096 \
   --cache-type-k q8_0 --cache-type-v q8_0 \
   --cache-reuse 256 \
+  --temp 0.7 \
   --jinja \
   --alias Hy-MT2-30B-A3B \
   --host 127.0.0.1 --port 8002
 ExecStop=/usr/bin/pkill -f "llama-server.*--port 8002"
-Restart=on-failure
-RestartSec=30
-TimeoutStartSec=120
-TimeoutStopSec=15
+Restart=always
+RestartSec=15
+TimeoutStartSec=300
+TimeoutStopSec=30
 
 [Install]
 WantedBy=default.target
