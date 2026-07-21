@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2] - 2026-07-21
+
+### Fixed
+
+- Added a fail-closed model backup helper that requires a separate mounted filesystem and verifies exact source and destination size and SHA256.
+- Added automatic exact hash and size checks to documented model installation and restoration.
+- Added a service installer that creates the original `.backup` once and preserves it across repeated installations.
+
 ## [1.1.1] - 2026-07-21
 
 ### Fixed

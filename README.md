@@ -30,15 +30,10 @@ f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a  Hy-MT2-30B-A3B
 31,985,729,632 bytes
 ```
 
-Back up this local-only artifact separately before any disk wipe, reinstallation, or model-directory cleanup. Keep the checksum with the backup and verify both checksum and size after copying:
+Back up this local-only artifact separately before any disk wipe, reinstallation, or model-directory cleanup. `backup_model.sh` fails closed unless the destination is a real mount point on a different filesystem from `/`, rejects symlinked or unsafe destinations, verifies the source, copies through a temporary file, and verifies the destination before publishing it:
 
 ```bash
-MODEL="$HOME/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf"
-BACKUP_DIR="/mnt/model-backup/hy-mt2-30b-a3b-q8"
-mkdir -p "$BACKUP_DIR"
-cp --preserve=mode,timestamps "$MODEL" "$BACKUP_DIR/"
-sha256sum "$MODEL" "$BACKUP_DIR/Hy-MT2-30B-A3B-Q8_0.gguf"
-stat --printf='%n %s bytes\n' "$MODEL" "$BACKUP_DIR/Hy-MT2-30B-A3B-Q8_0.gguf"
+./scripts/backup_model.sh /mnt/model-backup
 ```
 
 Do not remove the verified local copy until provenance is established or a separately verified backup exists.
@@ -62,10 +57,38 @@ The script refuses to alter a dirty existing checkout and fails closed if the pa
 ## Install the model
 
 ```bash
+EXPECTED_SHA256="f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a"
+EXPECTED_SIZE="31985729632"
+MODEL="$HOME/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf"
 mkdir -p "$HOME/ai/models/hy-mt2-30b-a3b-q8"
 cp Hy-MT2-30B-A3B-Q8_0.gguf \
-  "$HOME/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf"
-sha256sum "$HOME/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf"
+  "$MODEL"
+[[ "$(sha256sum "$MODEL" | awk '{print $1}')" == "$EXPECTED_SHA256" ]] || {
+  echo "Model SHA256 mismatch" >&2
+  exit 1
+}
+[[ "$(stat -c %s -- "$MODEL")" == "$EXPECTED_SIZE" ]] || {
+  echo "Model size mismatch" >&2
+  exit 1
+}
+```
+
+Restore a separately verified backup with the same automatic checks:
+
+```bash
+EXPECTED_SHA256="f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a"
+EXPECTED_SIZE="31985729632"
+MODEL="$HOME/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf"
+mkdir -p "$(dirname "$MODEL")"
+cp /mnt/model-backup/Hy-MT2-30B-A3B-Q8_0.gguf "$MODEL"
+[[ "$(sha256sum "$MODEL" | awk '{print $1}')" == "$EXPECTED_SHA256" ]] || {
+  echo "Restored model SHA256 mismatch" >&2
+  exit 1
+}
+[[ "$(stat -c %s -- "$MODEL")" == "$EXPECTED_SIZE" ]] || {
+  echo "Restored model size mismatch" >&2
+  exit 1
+}
 ```
 
 ## Start with the helper
@@ -91,19 +114,10 @@ Stop the helper-managed process with:
 
 ## Install the systemd user service
 
-The supplied unit uses `%h` paths, waits for `nvidia-smi`, retries without a start limit, and restarts after failures or clean exits.
+The supplied unit uses `%h` paths, waits for `nvidia-smi`, retries without a start limit, and restarts after failures or clean exits. The installer creates the original `.backup` once using an atomic hard-link publication step and never overwrites it on repeated installs.
 
 ```bash
-UNIT_DIR="$HOME/.config/systemd/user"
-UNIT_PATH="$UNIT_DIR/llama-hymt2.service"
-BACKUP_PATH="${UNIT_PATH}.backup"
-mkdir -p "$UNIT_DIR"
-if [[ -f "$UNIT_PATH" ]]; then
-  cp "$UNIT_PATH" "$BACKUP_PATH"
-fi
-cp systemd/llama-hymt2.service "$UNIT_PATH"
-systemctl --user daemon-reload
-systemctl --user enable --now llama-hymt2.service
+./scripts/install_service.sh
 systemctl --user status llama-hymt2.service
 curl -fsS http://127.0.0.1:8002/health
 ```

@@ -29,6 +29,10 @@ class RecipeTests(unittest.TestCase):
     def text(self, relative_path: str) -> str:
         return (ROOT / relative_path).read_text(encoding="utf-8")
 
+    def write_executable(self, path: Path, content: str) -> None:
+        path.write_text(content, encoding="utf-8")
+        path.chmod(0o755)
+
     def test_start_defaults_to_portable_live_q8_paths_and_flags(self):
         text = self.text("start.sh")
         self.assertIn(
@@ -155,6 +159,198 @@ class RecipeTests(unittest.TestCase):
         ):
             self.assertIn(marker, patch)
 
+    def test_backup_helper_verifies_source_and_destination(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            script = ROOT / "scripts/backup_model.sh"
+            model = temp / "Hy-MT2-30B-A3B-Q8_0.gguf"
+            model.write_text("test model", encoding="utf-8")
+            backup_root = temp / "backup"
+            backup_root.mkdir()
+            bin_dir = temp / "bin"
+            bin_dir.mkdir()
+            expected_hash = (
+                "f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a"
+            )
+            self.write_executable(
+                bin_dir / "mountpoint",
+                "#!/usr/bin/env bash\nexit 0\n",
+            )
+            self.write_executable(
+                bin_dir / "findmnt",
+                '#!/usr/bin/env bash\nprintf "%s\\n" "$BACKUP_ROOT"\n',
+            )
+            self.write_executable(
+                bin_dir / "stat",
+                (
+                    "#!/usr/bin/env bash\n"
+                    'if [[ "$*" == *"%d"* ]]; then\n'
+                    '  [[ "${@: -1}" == "/" ]] && echo 1 || echo 2\n'
+                    "else\n"
+                    '  echo "$EXPECTED_SIZE"\n'
+                    "fi\n"
+                ),
+            )
+            self.write_executable(
+                bin_dir / "sha256sum",
+                (
+                    "#!/usr/bin/env bash\n"
+                    'printf "%s  %s\\n" "$EXPECTED_HASH" "${@: -1}"\n'
+                ),
+            )
+            self.write_executable(
+                bin_dir / "cp",
+                (
+                    "#!/usr/bin/env bash\n"
+                    'touch "$CP_MARKER"\n'
+                    'exec /bin/cp "$@"\n'
+                ),
+            )
+            env = {
+                **os.environ,
+                "BACKUP_ROOT": str(backup_root),
+                "CP_MARKER": str(temp / "cp-called"),
+                "EXPECTED_HASH": expected_hash,
+                "EXPECTED_SIZE": "31985729632",
+                "MODEL": str(model),
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            }
+
+            result = subprocess.run(
+                ["bash", str(script), str(backup_root)],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((temp / "cp-called").exists())
+            self.assertTrue((backup_root / model.name).exists())
+            self.assertIn("verified backup", result.stdout.lower())
+
+    def test_backup_helper_rejects_same_filesystem_before_copy(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            script = ROOT / "scripts/backup_model.sh"
+            model = temp / "Hy-MT2-30B-A3B-Q8_0.gguf"
+            model.touch()
+            backup_root = temp / "backup"
+            backup_root.mkdir()
+            bin_dir = temp / "bin"
+            bin_dir.mkdir()
+            self.write_executable(bin_dir / "mountpoint", "#!/bin/sh\nexit 0\n")
+            self.write_executable(
+                bin_dir / "findmnt",
+                '#!/usr/bin/env bash\nprintf "%s\\n" "$BACKUP_ROOT"\n',
+            )
+            self.write_executable(bin_dir / "stat", "#!/bin/sh\necho 1\n")
+            self.write_executable(
+                bin_dir / "cp",
+                '#!/bin/sh\ntouch "$CP_MARKER"\nexit 0\n',
+            )
+            env = {
+                **os.environ,
+                "BACKUP_ROOT": str(backup_root),
+                "CP_MARKER": str(temp / "cp-called"),
+                "MODEL": str(model),
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            }
+
+            result = subprocess.run(
+                ["bash", str(script), str(backup_root)],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("different filesystem", result.stderr.lower())
+            self.assertFalse((temp / "cp-called").exists())
+
+    def test_backup_helper_rejects_source_checksum_before_copy(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            script = ROOT / "scripts/backup_model.sh"
+            model = temp / "Hy-MT2-30B-A3B-Q8_0.gguf"
+            model.touch()
+            backup_root = temp / "backup"
+            backup_root.mkdir()
+            bin_dir = temp / "bin"
+            bin_dir.mkdir()
+            self.write_executable(bin_dir / "mountpoint", "#!/bin/sh\nexit 0\n")
+            self.write_executable(
+                bin_dir / "findmnt",
+                '#!/usr/bin/env bash\nprintf "%s\\n" "$BACKUP_ROOT"\n',
+            )
+            self.write_executable(
+                bin_dir / "stat",
+                (
+                    "#!/usr/bin/env bash\n"
+                    'if [[ "$*" == *"%d"* ]]; then\n'
+                    '  [[ "${@: -1}" == "/" ]] && echo 1 || echo 2\n'
+                    "else\n"
+                    "  echo 31985729632\n"
+                    "fi\n"
+                ),
+            )
+            self.write_executable(
+                bin_dir / "sha256sum",
+                '#!/bin/sh\necho "bad-hash  $1"\n',
+            )
+            self.write_executable(
+                bin_dir / "cp",
+                '#!/bin/sh\ntouch "$CP_MARKER"\nexit 0\n',
+            )
+            env = {
+                **os.environ,
+                "BACKUP_ROOT": str(backup_root),
+                "CP_MARKER": str(temp / "cp-called"),
+                "MODEL": str(model),
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            }
+
+            result = subprocess.run(
+                ["bash", str(script), str(backup_root)],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("source sha256", result.stderr.lower())
+            self.assertFalse((temp / "cp-called").exists())
+
+    def test_backup_helper_rejects_symlink_destination(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            script = ROOT / "scripts/backup_model.sh"
+            real_root = temp / "real"
+            real_root.mkdir()
+            backup_root = temp / "backup"
+            backup_root.symlink_to(real_root, target_is_directory=True)
+            result = subprocess.run(
+                ["bash", str(script), str(backup_root)],
+                env={**os.environ, "MODEL": str(temp / "model.gguf")},
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("symlink", result.stderr.lower())
+
+    def test_backup_helper_publishes_without_overwriting(self):
+        text = self.text("scripts/backup_model.sh")
+        self.assertIn('ln -- "$TEMP_FILE" "$DESTINATION"', text)
+        self.assertNotIn("mv --no-clobber", text)
+
     def test_docs_state_local_only_unknown_provenance_and_artifact_facts(self):
         readme = self.text("README.md")
         changelog = self.text("CHANGELOG.md")
@@ -178,14 +374,60 @@ class RecipeTests(unittest.TestCase):
         self.assertNotRegex(combined, r"(?i)direct public Q8.*artifact")
         self.assertNotRegex(combined, r"/path/to|<repo>|Q4_K_M")
 
-    def test_docs_back_up_unit_before_install_and_restore_it(self):
+    def test_service_installer_preserves_original_backup_across_repeated_runs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            unit_dir = temp / "systemd"
+            unit_dir.mkdir()
+            unit_path = unit_dir / "llama-hymt2.service"
+            unit_path.write_text("original unit\n", encoding="utf-8")
+            bin_dir = temp / "bin"
+            bin_dir.mkdir()
+            self.write_executable(
+                bin_dir / "systemctl",
+                '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_LOG"\n',
+            )
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "SYSTEMCTL_LOG": str(temp / "systemctl.log"),
+                "UNIT_DIR": str(unit_dir),
+            }
+            script = ROOT / "scripts/install_service.sh"
+
+            first = subprocess.run(
+                ["bash", str(script)],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            second = subprocess.run(
+                ["bash", str(script)],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(
+                (unit_dir / "llama-hymt2.service.backup").read_text(
+                    encoding="utf-8"
+                ),
+                "original unit\n",
+            )
+            self.assertEqual(
+                unit_path.read_text(encoding="utf-8"),
+                self.text("systemd/llama-hymt2.service"),
+            )
+
+    def test_docs_use_safe_service_installer_and_restore_backup(self):
         readme = self.text("README.md")
-        self.assertIn(
-            'if [[ -f "$UNIT_PATH" ]]; then\n'
-            '  cp "$UNIT_PATH" "$BACKUP_PATH"\n'
-            "fi",
-            readme,
-        )
+        self.assertIn("./scripts/install_service.sh", readme)
         self.assertIn(
             'if [[ -f "$BACKUP_PATH" ]]; then\n'
             '  cp "$BACKUP_PATH" "$UNIT_PATH"\n'
@@ -197,6 +439,14 @@ class RecipeTests(unittest.TestCase):
         )
         self.assertIn("systemctl --user daemon-reload", readme)
         self.assertIn("systemctl --user enable --now llama-hymt2.service", readme)
+
+    def test_docs_use_backup_helper_and_verify_model_hash_and_size(self):
+        readme = self.text("README.md")
+        self.assertIn("./scripts/backup_model.sh /mnt/model-backup", readme)
+        self.assertIn('EXPECTED_SHA256="f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a"', readme)
+        self.assertIn('EXPECTED_SIZE="31985729632"', readme)
+        self.assertIn('[[ "$(sha256sum "$MODEL" | awk \'{print $1}\')" == "$EXPECTED_SHA256" ]]', readme)
+        self.assertIn('[[ "$(stat -c %s -- "$MODEL")" == "$EXPECTED_SIZE" ]]', readme)
 
     def test_gitignore_preserves_worktrees_and_ignores_build_outputs(self):
         text = self.text(".gitignore")
