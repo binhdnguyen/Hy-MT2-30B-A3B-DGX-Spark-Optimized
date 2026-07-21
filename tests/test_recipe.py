@@ -450,7 +450,7 @@ class RecipeTests(unittest.TestCase):
 
     def test_gitignore_preserves_worktrees_and_ignores_build_outputs(self):
         text = self.text(".gitignore")
-        self.assertNotIn(".worktrees/", text)
+        self.assertIn(".worktrees/", text)
         self.assertRegex(text, re.compile(r"(?m)^llama\.cpp/$"))
         self.assertRegex(text, re.compile(r"(?m)^\*\.gguf$"))
 
