@@ -7,7 +7,7 @@ A reproducible `llama-server` recipe matching the verified local Hy-MT2-30B-A3B 
 | Property | Value |
 |---|---|
 | Base model | [`tencent/Hy-MT2-30B-A3B`](https://huggingface.co/tencent/Hy-MT2-30B-A3B) |
-| GGUF source repository | [`GrahLnn/Hy-MT2-30B-A3B-4bit-GGUF`](https://huggingface.co/GrahLnn/Hy-MT2-30B-A3B-4bit-GGUF) |
+| Related GGUF repository | [`GrahLnn/Hy-MT2-30B-A3B-4bit-GGUF`](https://huggingface.co/GrahLnn/Hy-MT2-30B-A3B-4bit-GGUF), inspected at `4ae7787` |
 | Deployed quantization | Q8_0 |
 | Deployed filename | `Hy-MT2-30B-A3B-Q8_0.gguf` |
 | Size | 31,985,729,632 bytes |
@@ -21,38 +21,33 @@ The service was verified enabled and active, and its `/health` endpoint returned
 
 ## Q8_0 artifact provenance
 
-There is currently **no direct public Q8 download artifact** known to match the deployed file. The GGUF source repository publishes a BF16 conversion source and lower-bit derivatives, but does not currently track this exact Q8_0 file. Do not substitute a guessed URL.
+The deployed Q8_0 artifact is **local-only and of unknown provenance**. Inspection of related model repository commit `4ae7787` found only Q2, Q3, and Q4 files. It does not establish a source or generation path for this Q8_0 file. This recipe therefore does not claim that the exact artifact can be downloaded or regenerated.
 
-Reproduce the route from the advertised BF16 GGUF:
-
-```bash
-git lfs install
-git clone https://huggingface.co/GrahLnn/Hy-MT2-30B-A3B-4bit-GGUF
-cd Hy-MT2-30B-A3B-4bit-GGUF
-
-$HOME/ai/hy-mt2-gguf-repo/llama.cpp/build-hyv3-cuda/bin/llama-quantize \
-  Hy-MT2-30B-A3B-BF16.gguf \
-  Hy-MT2-30B-A3B-Q8_0.gguf \
-  Q8_0
-
-sha256sum Hy-MT2-30B-A3B-Q8_0.gguf
-stat --printf='%s bytes\n' Hy-MT2-30B-A3B-Q8_0.gguf
-```
-
-Expected deployed checksum and size:
+Identify the deployed local file only by both checksum and size:
 
 ```text
 f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a  Hy-MT2-30B-A3B-Q8_0.gguf
 31,985,729,632 bytes
 ```
 
-Checksum equality depends on the pinned source artifact, exact patched llama.cpp commit, patch, quantization command, and tooling versions. Verify the result before treating a generated file as identical to the deployment.
+Back up this local-only artifact separately before any disk wipe, reinstallation, or model-directory cleanup. Keep the checksum with the backup and verify both checksum and size after copying:
+
+```bash
+MODEL="$HOME/ai/models/hy-mt2-30b-a3b-q8/Hy-MT2-30B-A3B-Q8_0.gguf"
+BACKUP_DIR="/mnt/model-backup/hy-mt2-30b-a3b-q8"
+mkdir -p "$BACKUP_DIR"
+cp --preserve=mode,timestamps "$MODEL" "$BACKUP_DIR/"
+sha256sum "$MODEL" "$BACKUP_DIR/Hy-MT2-30B-A3B-Q8_0.gguf"
+stat --printf='%n %s bytes\n' "$MODEL" "$BACKUP_DIR/Hy-MT2-30B-A3B-Q8_0.gguf"
+```
+
+Do not remove the verified local copy until provenance is established or a separately verified backup exists.
 
 ## Prerequisites
 
 - NVIDIA DGX Spark / GB10 with a working CUDA driver
-- `git`, Git LFS, CMake, a C++ compiler, CUDA toolkit, `bash`, and `curl`
-- Enough storage for the BF16 source, Q8_0 output, and build tree
+- `git`, CMake, a C++ compiler, CUDA toolkit, `bash`, and `curl`
+- Enough storage for the local Q8_0 backup and llama.cpp build tree
 
 ## Build the pinned patched llama.cpp
 
@@ -99,8 +94,14 @@ Stop the helper-managed process with:
 The supplied unit uses `%h` paths, waits for `nvidia-smi`, retries without a start limit, and restarts after failures or clean exits.
 
 ```bash
-mkdir -p "$HOME/.config/systemd/user"
-cp systemd/llama-hymt2.service "$HOME/.config/systemd/user/"
+UNIT_DIR="$HOME/.config/systemd/user"
+UNIT_PATH="$UNIT_DIR/llama-hymt2.service"
+BACKUP_PATH="${UNIT_PATH}.backup"
+mkdir -p "$UNIT_DIR"
+if [[ -f "$UNIT_PATH" ]]; then
+  cp "$UNIT_PATH" "$BACKUP_PATH"
+fi
+cp systemd/llama-hymt2.service "$UNIT_PATH"
 systemctl --user daemon-reload
 systemctl --user enable --now llama-hymt2.service
 systemctl --user status llama-hymt2.service
@@ -132,17 +133,27 @@ sudo loginctl enable-linger "$USER"
 
 ## Restore or roll back
 
+Restore the saved unit and restart it:
+
 ```bash
-systemctl --user disable --now llama-hymt2.service
-rm "$HOME/.config/systemd/user/llama-hymt2.service"
+UNIT_PATH="$HOME/.config/systemd/user/llama-hymt2.service"
+BACKUP_PATH="${UNIT_PATH}.backup"
+if [[ -f "$BACKUP_PATH" ]]; then
+  cp "$BACKUP_PATH" "$UNIT_PATH"
+else
+  echo "No saved unit backup found at $BACKUP_PATH" >&2
+  exit 1
+fi
 systemctl --user daemon-reload
+systemctl --user enable --now llama-hymt2.service
 ```
 
-If replacing an older unit, save it first and restore that backup instead of deleting it:
+If no previous unit existed and you need to uninstall this one:
 
 ```bash
-cp "$HOME/.config/systemd/user/llama-hymt2.service" \
-  "$HOME/.config/systemd/user/llama-hymt2.service.backup"
+systemctl --user disable --now llama-hymt2.service
+rm -f "$HOME/.config/systemd/user/llama-hymt2.service"
+systemctl --user daemon-reload
 ```
 
 No service restart or model load is required to validate this repository's static recipe files.

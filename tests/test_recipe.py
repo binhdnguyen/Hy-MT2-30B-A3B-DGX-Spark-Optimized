@@ -1,5 +1,8 @@
+import os
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 import unittest
 
 
@@ -49,6 +52,58 @@ class RecipeTests(unittest.TestCase):
         self.assertIn("kill -0", text)
         self.assertIn("/health", text)
         self.assertIn('rm -f "$PID_FILE"', text)
+
+    def test_start_does_not_duplicate_live_unhealthy_pid(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            start = temp / "start.sh"
+            start.write_text(self.text("start.sh"), encoding="utf-8")
+            model = temp / "model.gguf"
+            model.touch()
+            launch_marker = temp / "launched"
+            server = temp / "llama-server"
+            server.write_text(
+                '#!/usr/bin/env bash\ntouch "$LAUNCH_MARKER"\n',
+                encoding="utf-8",
+            )
+            server.chmod(0o755)
+            curl = temp / "curl"
+            curl.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            curl.chmod(0o755)
+            pid_file = temp / ".llama-hymt2.pid"
+            pid_file.write_text(str(os.getpid()), encoding="utf-8")
+            env = {
+                **os.environ,
+                "KILL_STUB_MARKER": str(temp / "kill-called"),
+                "MODEL": str(model),
+                "PATCHED_LLAMA": str(server),
+                "LAUNCH_MARKER": str(launch_marker),
+                "PATH": f"{temp}:{os.environ['PATH']}",
+            }
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    (
+                        'kill() { touch "$KILL_STUB_MARKER"; return 0; }; '
+                        'export -f kill; exec bash "$1"'
+                    ),
+                    "_",
+                    str(start),
+                ],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("still starting or unhealthy", result.stderr.lower())
+            self.assertEqual(pid_file.read_text(encoding="utf-8"), str(os.getpid()))
+            self.assertTrue((temp / "kill-called").exists())
+            self.assertFalse(launch_marker.exists())
 
     def test_systemd_matches_portable_live_policy(self):
         text = self.text("systemd/llama-hymt2.service")
@@ -100,7 +155,7 @@ class RecipeTests(unittest.TestCase):
         ):
             self.assertIn(marker, patch)
 
-    def test_docs_state_source_generation_and_deployed_artifact_facts(self):
+    def test_docs_state_local_only_unknown_provenance_and_artifact_facts(self):
         readme = self.text("README.md")
         changelog = self.text("CHANGELOG.md")
         combined = readme + changelog
@@ -109,16 +164,39 @@ class RecipeTests(unittest.TestCase):
             readme,
         )
         self.assertIn("tencent/Hy-MT2-30B-A3B", readme)
-        self.assertIn("BF16", readme)
-        self.assertIn("llama-quantize", readme)
+        self.assertIn("4ae7787", readme)
         self.assertIn(
             "f1603f5515a69e4a04b5e989bc7232f71f9120fe7fb980888c0f4b524f38d86a",
             combined,
         )
         self.assertIn("31,985,729,632", combined)
-        self.assertRegex(readme, r"(?i)checksum.*pinned|pinned.*checksum")
-        self.assertRegex(readme, r"(?i)no direct public Q8|not.*public.*Q8")
+        self.assertRegex(readme, r"(?i)local-only")
+        self.assertRegex(readme, r"(?i)unknown provenance")
+        self.assertRegex(readme, r"(?i)back up.*separately.*before.*wipe")
+        self.assertNotIn("Hy-MT2-30B-A3B-BF16.gguf", combined)
+        self.assertNotRegex(combined, r"(?i)BF16-to-Q8|reproduce.*Q8|regenerate.*Q8")
+        self.assertNotRegex(combined, r"(?i)direct public Q8.*artifact")
         self.assertNotRegex(combined, r"/path/to|<repo>|Q4_K_M")
+
+    def test_docs_back_up_unit_before_install_and_restore_it(self):
+        readme = self.text("README.md")
+        self.assertIn(
+            'if [[ -f "$UNIT_PATH" ]]; then\n'
+            '  cp "$UNIT_PATH" "$BACKUP_PATH"\n'
+            "fi",
+            readme,
+        )
+        self.assertIn(
+            'if [[ -f "$BACKUP_PATH" ]]; then\n'
+            '  cp "$BACKUP_PATH" "$UNIT_PATH"\n'
+            "else\n"
+            '  echo "No saved unit backup found at $BACKUP_PATH" >&2\n'
+            "  exit 1\n"
+            "fi",
+            readme,
+        )
+        self.assertIn("systemctl --user daemon-reload", readme)
+        self.assertIn("systemctl --user enable --now llama-hymt2.service", readme)
 
     def test_gitignore_preserves_worktrees_and_ignores_build_outputs(self):
         text = self.text(".gitignore")

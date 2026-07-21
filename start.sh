@@ -31,11 +31,15 @@ fi
 # ---- Check if already running ----
 if [[ -f "$PID_FILE" ]]; then
   pid=$(cat "$PID_FILE")
-  if kill -0 "$pid" 2>/dev/null && curl -fsS "$READY_URL" >/dev/null 2>&1; then
-    echo "Hy-MT2 already running (pid $pid) on $HOST:$PORT"
-    exit 0
+  if kill -0 "$pid" 2>/dev/null; then
+    if curl -fsS "$READY_URL" >/dev/null 2>&1; then
+      echo "Hy-MT2 already running (pid $pid) on $HOST:$PORT"
+      exit 0
+    fi
+    echo "ERROR: Hy-MT2 process $pid is still starting or unhealthy; refusing a duplicate launch" >&2
+    exit 1
   fi
-  echo "Stale PID — cleaning up"
+  echo "Stale PID - cleaning up"
   rm -f "$PID_FILE"
 fi
 
