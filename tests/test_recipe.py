@@ -346,10 +346,11 @@ class RecipeTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("symlink", result.stderr.lower())
 
-    def test_backup_helper_publishes_without_overwriting(self):
+    def test_backup_helper_publishes_on_exfat_without_overwriting(self):
         text = self.text("scripts/backup_model.sh")
-        self.assertIn('ln -- "$TEMP_FILE" "$DESTINATION"', text)
-        self.assertNotIn("mv --no-clobber", text)
+        self.assertIn('mv --no-clobber -- "$TEMP_FILE" "$DESTINATION"', text)
+        self.assertNotIn('ln -- "$TEMP_FILE" "$DESTINATION"', text)
+        self.assertNotIn("--preserve=mode", text)
 
     def test_docs_state_local_only_unknown_provenance_and_artifact_facts(self):
         readme = self.text("README.md")

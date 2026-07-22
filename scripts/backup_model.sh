@@ -52,7 +52,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cp --reflink=auto --sparse=always --preserve=mode,timestamps -- "$MODEL" "$TEMP_FILE"
+cp --reflink=auto --sparse=always -- "$MODEL" "$TEMP_FILE"
 
 DEST_SIZE="$(stat -c %s -- "$TEMP_FILE")"
 [[ "$DEST_SIZE" == "$EXPECTED_SIZE" ]] ||
@@ -62,8 +62,8 @@ DEST_SHA256="${DEST_SHA256%% *}"
 [[ "$DEST_SHA256" == "$EXPECTED_SHA256" ]] ||
   fail "Destination SHA256 mismatch: expected $EXPECTED_SHA256, got $DEST_SHA256"
 
-ln -- "$TEMP_FILE" "$DESTINATION" ||
+mv --no-clobber -- "$TEMP_FILE" "$DESTINATION"
+[[ ! -e "$TEMP_FILE" ]] ||
   fail "Destination appeared during backup; refusing to overwrite: $DESTINATION"
-rm -f -- "$TEMP_FILE"
 trap - EXIT
 echo "Verified backup created: $DESTINATION"
